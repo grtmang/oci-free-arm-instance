@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # 这里全面读取你在 Step 4 中设置的 11 个 Secrets
   COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
   IMAGE_ID: ${{ secrets.IMAGE_ID }}
   SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
@@ -25,13 +24,11 @@ jobs:
           pip install oci-cli
           mkdir -p ~/.oci
           
-          # 安全写入私钥
           cat << 'EOF' > ~/.oci/oci_api_key.pem
           ${{ secrets.OCI_CLI_KEY_CONTENT }}
           EOF
           chmod 600 ~/.oci/oci_api_key.pem
 
-          # 动态写入所有的认证配置
           echo "[DEFAULT]" > ~/.oci/config
           echo "user=${{ secrets.OCI_CLI_USER }}" >> ~/.oci/config
           echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
@@ -39,16 +36,12 @@ jobs:
           echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
           echo "region=${{ env.OCI_CLI_REGION }}" >> ~/.oci/config
           
-          # 修复权限警告
           chmod 600 ~/.oci/config
-          
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /home/runner/my_ssh_key.pub
 
       - name: 🔍 测试 API 认证
         run: |
-          echo "正在向甲骨文服务器验证你的 API 凭证..."
-          oci iam region list --output table || { echo "❌ 认证失败！请重新检查 Secrets 里的 User、Tenancy、Fingerprint 和 API_KEY"; exit 1; }
-          echo "✅ 认证成功！开始排队抢机器..."
+          oci iam region list --output table || { echo "DISCORD_MSG=❌ **认证中断！** 无法连接甲骨文，请检查 Secrets 配置。" >> $GITHUB_ENV; exit 1; }
 
       - name: Try to Launch VM
         id: create_vm
@@ -66,19 +59,22 @@ jobs:
             --assign-public-ip true \
             --display-name "coolify-vm" \
             --boot-volume-size-in-gbs 100 2>&1 || true)
-            
-          echo "log_data<<EOF_LOG" >> $GITHUB_OUTPUT
-          echo "$OCI_OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF_LOG" >> $GITHUB_OUTPUT
           
           if echo "$OCI_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
-            echo "🎉 抢占成功！"
+            echo 'DISCORD_MSG=🎉 **【特大喜讯】抢占成功！** 你的 4核24G 免费神机正在开机，请**立刻**去 GitHub 关闭此工作流以免封号！' >> $GITHUB_ENV
             exit 0
           elif echo "$OCI_OUTPUT" | grep -q 'Out of host capacity'; then
-            echo "⏳ 缺货排队中，5分钟后将自动重试..."
+            echo 'DISCORD_MSG=⏳ **机房缺货，正常排队中...** (Out of host capacity)。脚本正在云端挂机，5 分钟后将自动发起下一次冲锋。' >> $GITHUB_ENV
             exit 1
           else
-            echo "❌ 遇到其他错误"
+            # 如果出现我们没见过的未知报错，依然把日志打出来方便排查
+            EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+            echo "DISCORD_MSG<<$EOF" >> $GITHUB_ENV
+            echo "⚠️ **触发未知报错：**" >> $GITHUB_ENV
+            echo "\`\`\`json" >> $GITHUB_ENV
+            echo "$OCI_OUTPUT" >> $GITHUB_ENV
+            echo "\`\`\`" >> $GITHUB_ENV
+            echo "$EOF" >> $GITHUB_ENV
             exit 1
           fi
 
@@ -87,12 +83,7 @@ jobs:
         uses: sarisia/actions-status-discord@v1.15.4
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "OCI VM Status: ${{ steps.create_vm.outcome || 'failure' }}"
+          title: "甲骨文云排队播报"
           status: ${{ steps.create_vm.outcome || 'failure' }}
-          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
-          description: |
-            **Status:** `${{ steps.create_vm.outcome || 'failure' }}`
-            **Log Output:**
-            ```json
-            ${{ steps.create_vm.outputs.log_data || '认证失败，跳过执行。请检查凭证！' }}
-            ```
+          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0x6c757d' }}
+          description: ${{ env.DISCORD_MSG || '执行中断，未获取到状态反馈。' }}
