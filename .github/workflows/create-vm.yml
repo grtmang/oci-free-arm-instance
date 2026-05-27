@@ -1,0 +1,71 @@
+name: Try to Create OCI VM
+
+on:
+  schedule:
+    - cron: '*/10 * * * *' # 每 10 分钟自动运行一次
+  workflow_dispatch: # 允许手动点击触发
+
+jobs:
+  create-instance:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install OCI CLI
+      run: |
+        curl -sL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | bash -s -- --accept-all-defaults
+        echo "/home/runner/bin" >> $GITHUB_PATH
+
+    - name: Configure OCI CLI
+      env:
+        OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+        OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+        OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+        OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+        OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      run: |
+        mkdir -p ~/.oci
+        echo "[DEFAULT]" > ~/.oci/config
+        echo "user=$OCI_CLI_USER" >> ~/.oci/config
+        echo "fingerprint=$OCI_CLI_FINGERPRINT" >> ~/.oci/config
+        echo "tenancy=$OCI_CLI_TENANCY" >> ~/.oci/config
+        echo "region=$OCI_CLI_REGION" >> ~/.oci/config
+        echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
+        
+        echo "$OCI_CLI_KEY_CONTENT" > ~/.oci/oci_api_key.pem
+        chmod 600 ~/.oci/oci_api_key.pem
+
+    - name: Try to Launch Instance
+      id: launch
+      continue-on-error: true
+      env:
+        OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
+        IMAGE_ID: ${{ secrets.IMAGE_ID }}
+        OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+        AD_NAME: ${{ secrets.AD_NAME }}
+        SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+      run: |
+        oci compute instance launch \
+          --availability-domain "$AD_NAME" \
+          --compartment-id "$OCI_COMPARTMENT_ID" \
+          --shape "VM.Standard.A1.Flex" \
+          --shape-config '{"ocpus":2,"memoryInGBs":12}' \
+          --assign-public-ip false \
+          --image-id "$IMAGE_ID" \
+          --subnet-id "$OCI_SUBNET_ID" \
+          --ssh-authorized-keys "$SSH_PUBLIC_KEY" \
+          --display-name "coolify-vm" \
+          --boot-volume-size-in-gbs 100
+
+    - name: Send Discord Notification
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: |
+        if [ "${{ steps.launch.outcome }}" = "success" ]; then
+          MESSAGE="🎉 【成功】Oracle ARM 实例创建成功！请立刻去 GitHub Actions 页面禁用此 Workflow！"
+        else
+          MESSAGE="🤖 【尝试】抢占失败，原因通常为：Out of host capacity (资源不足)。10分钟后将自动重试。"
+        fi
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"$MESSAGE\"}" $DISCORD_WEBHOOK_URL
