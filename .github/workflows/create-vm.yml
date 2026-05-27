@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
 
 env:
+  # 这里全面读取你在 Step 4 中设置的 11 个 Secrets
   COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
-  IMAGE_ID: "ocid1.image.oc1.ap-singapore-1.aaaaaaaa5a3xwkk5vaichk47fms2uzvsqeriats2uorf6kwgq3l3nwrbhipa"
+  IMAGE_ID: ${{ secrets.IMAGE_ID }}
   SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
-  AD_NAME: "KClJ:AP-SINGAPORE-1-AD-1"
-  OCI_CLI_REGION: "ap-singapore-1"
+  AD_NAME: ${{ secrets.AD_NAME }}
+  OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
 
 jobs:
   build-and-deploy:
@@ -24,11 +25,13 @@ jobs:
           pip install oci-cli
           mkdir -p ~/.oci
           
+          # 安全写入私钥
           cat << 'EOF' > ~/.oci/oci_api_key.pem
           ${{ secrets.OCI_CLI_KEY_CONTENT }}
           EOF
           chmod 600 ~/.oci/oci_api_key.pem
 
+          # 动态写入所有的认证配置
           echo "[DEFAULT]" > ~/.oci/config
           echo "user=${{ secrets.OCI_CLI_USER }}" >> ~/.oci/config
           echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}" >> ~/.oci/config
@@ -36,7 +39,7 @@ jobs:
           echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
           echo "region=${{ env.OCI_CLI_REGION }}" >> ~/.oci/config
           
-          # 修复文件权限警告
+          # 修复权限警告
           chmod 600 ~/.oci/config
           
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /home/runner/my_ssh_key.pub
@@ -84,7 +87,6 @@ jobs:
         uses: sarisia/actions-status-discord@v1.15.4
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          # 修复 status 报错问题
           title: "OCI VM Status: ${{ steps.create_vm.outcome || 'failure' }}"
           status: ${{ steps.create_vm.outcome || 'failure' }}
           color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
