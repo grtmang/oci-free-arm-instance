@@ -1,8 +1,8 @@
 name: Try to Create OCI VM
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  repository_dispatch:
+    types: [trigger-oci-vm]
   workflow_dispatch:
 
 env:
