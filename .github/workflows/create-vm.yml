@@ -2,7 +2,8 @@ name: Try to Create OCI VM
 
 on:
   repository_dispatch:
-    types: [trigger-oci-vm]
+    # 核心改动：不仅接收常规抢机指令(trigger-oci-vm)，还接收每日报告指令(daily-report)
+    types: [trigger-oci-vm, daily-report]
   workflow_dispatch:
 
 env:
@@ -23,7 +24,6 @@ jobs:
         run: |
           pip install oci-cli
           mkdir -p ~/.oci
-          
           cat << 'EOF' > ~/.oci/oci_api_key.pem
           ${{ secrets.OCI_CLI_KEY_CONTENT }}
           EOF
@@ -41,7 +41,7 @@ jobs:
 
       - name: 🔍 测试 API 认证
         run: |
-          oci iam region list --output table || { echo "DISCORD_MSG=❌ **认证中断！** 无法连接甲骨文，请检查 Secrets 配置。" >> $GITHUB_ENV; exit 1; }
+          oci iam region list --output table || { echo "DISCORD_MSG=❌ **认证中断！** 请检查 Secrets 配置。" >> $GITHUB_ENV; exit 1; }
 
       - name: Try to Launch VM
         id: create_vm
@@ -67,7 +67,6 @@ jobs:
             echo 'DISCORD_MSG=⏳ **机房缺货，正常排队中...** (Out of host capacity)。脚本正在云端挂机，5 分钟后将自动发起下一次冲锋。' >> $GITHUB_ENV
             exit 1
           else
-            # 如果出现我们没见过的未知报错，依然把日志打出来方便排查
             EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
             echo "DISCORD_MSG<<$EOF" >> $GITHUB_ENV
             echo "⚠️ **触发未知报错：**" >> $GITHUB_ENV
@@ -79,7 +78,16 @@ jobs:
           fi
 
       - name: Send Discord Notification
-        if: always()
+        # 核心拦截逻辑：
+        # 1. 如果抢机成功了(success) -> 必须推送！
+        # 2. 如果是每日定时报告到了(daily-report) -> 必须推送！
+        # 3. 如果你在网页上手动点击运行(workflow_dispatch) -> 必须推送！
+        if: |
+          always() && (
+            steps.create_vm.outcome == 'success' || 
+            github.event.action == 'daily-report' || 
+            github.event_name == 'workflow_dispatch'
+          )
         uses: sarisia/actions-status-discord@v1.15.4
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
